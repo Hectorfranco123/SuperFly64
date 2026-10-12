@@ -22,3 +22,8 @@ Thumbs.db
 *.log
 saves/
 states/
+
+# Fly Brain Datasets
+connections_princeton.csv
+consolidated_cell_types.csv
+neurons.csv
