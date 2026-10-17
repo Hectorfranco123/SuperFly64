@@ -1,6 +1,6 @@
-import pandas as pd
-import numpy as np
 import networkx as nx
+import numpy as np
+import pandas as pd
 
 cell_types = pd.read_csv("consolidated_cell_types.csv")
 neurons = pd.read_csv("neurons.csv")
