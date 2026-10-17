@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+title: "Mario Fly Brain: Biologically Constrained Drosophila Connectome Reinforcement Learning in Super Mario 64"
+message: "If you use this software, connectome pipeline, or environment harness in your research, academic work, or public media, please cite it using the metadata below."
+type: software
+authors:
+  - given-names: Rommel
+    family-names: Sanchez Perez
+    affiliation: Elizabethtown College
+  - given-names: Hector
+    family-names: Franco
+    affiliation: Elizabethtown College
+repository-code: "https://github.com/Nietch2/Superfly64"
+url: "https://github.com/Nietch2/SuperFly64"
+abstract: >-
+  An Embodied AI framework mapping the Drosophila melanogaster Mushroom Body
+  connectome (FlyWire/FAFB dataset) to control Mario in Super Mario 64 via
+  libsm64, utilizing biologically constrained dopaminergic reward pathways
+  (KC, MBON, PAM, and PPL neuron clusters) for autonomous 3D foraging.
+keywords:
+  - connectome
+  - drosophila
+  - mushroom-body
+  - reinforcement-learning
+  - computational-neuroscience
+  - sm64
+  - libsm64
+  - embodied-ai
+version: 0.1.0
+date-released: "2026-10-16"
+references:
+  - type: article
+    title: "Neuronal wiring diagram of an adult brain"
+    authors:
+      - family-names: Dorkenwald
+        given-names: Sven
+      - name: "The FlyWire Consortium"
+    journal: "Nature"
+    year: 2024
+    doi: "10.1038/s41586-024-07558-y"
