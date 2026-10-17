@@ -25,7 +25,7 @@ If you use **Mario Fly Brain** in academic research or coursework, please cite t
   year         = {2026},
   month        = oct,
   institution  = {Elizabethtown College},
-  url          = {[https://github.com/](https://github.com/)Nietch2/mario-fly-brain},
+  url          = {[https://github.com/](https://github.com/)Nietch2/SuperFly64},
   version      = {0.1.0}
 }
 ```
