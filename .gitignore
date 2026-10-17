@@ -28,4 +28,7 @@ connections_princeton.csv
 consolidated_cell_types.csv
 neurons.csv
 
+# Fly Brain NetworkX graph
+mushroom_body.graphml
+
 sm64mod/
