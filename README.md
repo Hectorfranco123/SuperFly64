@@ -13,7 +13,7 @@ This project is open for personal, educational, and academic research use. Howev
 ### Media, Videos & Presentations
 If you feature this project in a video, stream, or article, you must include:
 1. Visible and verbal credit to the authors (**Rommel Sanchez Perez** and **Hector Franco**).
-2. A direct link to this repository in the video description or article text: `https://github.com/[YOUR-GITHUB-USERNAME]/mario-fly-brain`
+2. A direct link to this repository in the video description or article text: `https://github.com/Nietch2/mario-fly-brain`
 
 ### Academic Publications
 If you use **Mario Fly Brain** in academic research or coursework, please cite this repository using the GitHub **"Cite this repository"** button in the sidebar (powered by [`CITATION.cff`](CITATION.cff)) or via the following BibTeX entry:
