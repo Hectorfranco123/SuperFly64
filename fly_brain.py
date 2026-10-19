@@ -8,15 +8,47 @@ import scipy.sparse as sp
 class fly_brain:
     
     def __init__(self, graphml_path):
+        # Load the serialized biological connectome graph from the GraphML XML file
         G = nx.read_graphml(graphml_path)
+
+        # Extract all nodes with their associated biological attribute dictionaries as tuples: (node_id, data)
         self.node_list = list(G.nodes(data = True))
-        self.kc_idx = []
-        self.mbon_idx = []
-        self.pam_idx = []
-        self.ppl_idx = []
-        for index, cell in enumerate(self.node_list):
-            cell_prim_type = cell[1].get("primary_type")
-            cell_add_type = cell[1].get("additional_type(s)")
+
+        # Explicitly track 18-digit FlyWire root_ids in exact iteration order to preserve deterministic mapping
+        self.node_ids = []
+
+        # Integer index lists: store array indices (0 to 5585) corresponding to each functional cell class
+        self.kc_idx = []    # Kenyon Cells: sparse sensory expansion layer (inputs)
+        self.mbon_idx = []  # Mushroom Body Output Neurons: motor control readout (outputs)
+        self.pam_idx = []   # Protocerebral Anterior Medial: appetitive dopaminergic reward cluster
+        self.ppl_idx = []   # Protocerebral Posterior Lateral: aversive dopaminergic punishment cluster
+
+        # List to store the continuous fast synaptic sign/valence scalar for each presynaptic neuron
+        self.val_vectors = []
+
+        # Single-pass O(N) extraction loop over the connectome nodes and attributes
+        for index, (node_id, data) in enumerate(self.node_list):
+            self.node_ids.append(node_id)
+
+            # Continuous valence calculation using Synister classifier probability averages:
+            # Net valence = Excitatory drive (Acetylcholine) minus Inhibitory drive (GABA + Glutamate)
+            if data.get("ach_avg") == 0 and data.get("gaba_avg") == 0 and data.get("glut_avg") == 0:
+                # Fallback: if continuous averages are unpopulated (0), assign discrete signs from the primary nt_type label
+                if data.get("nt_type") == "ACH":
+                    self.val_vectors.append(1)    # Acetylcholine is fast excitatory in Drosophila
+                elif data.get("nt_type") == "GABA":  # noqa: SIM114
+                    self.val_vectors.append(-1)   # GABA is fast inhibitory
+                elif data.get("nt_type") == "GLUT":
+                    self.val_vectors.append(-1)   # Glutamate acts primarily as an inhibitory transmitter in fly central circuits
+                else:
+                   self.val_vectors.append(0.5)   # Default modest positive valence for unclassified/modulatory transmitters
+            else:
+                # Compute continuous signed valence score ranging between -1.0 (strongly inhibitory) and +1.0 (strongly excitatory)
+                self.val_vectors.append(data.get("ach_avg") - (data.get("gaba_avg") + data.get("glut_avg")))
+
+            # Classify the neuron into its functional compartment by checking both primary and secondary cell type annotations
+            cell_prim_type = data.get("primary_type")
+            cell_add_type = data.get("additional_type(s)")
             if "KC" in cell_prim_type or "KC" in cell_add_type:  
                 self.kc_idx.append(index)
             elif "MBON" in cell_prim_type  or "MBON" in cell_add_type:
@@ -26,12 +58,28 @@ class fly_brain:
             elif "PPL" in cell_prim_type  or "PPL" in cell_add_type:
                 self.ppl_idx.append(index)
             else:
+                # Sanity check: ensure no extraneous, non-Mushroom-Body neurons leaked through the upstream filtering pipeline
                 raise ValueError ("Error, one of the cells is not the required mushroom body cell types")
+
+        # Convert index lists to 1D contiguous NumPy integer arrays for O(1) vector slicing during simulation updates
         self.kc_idx = np.array(self.kc_idx)
         self.mbon_idx = np.array(self.mbon_idx)
         self.pam_idx = np.array(self.pam_idx)
         self.ppl_idx = np.array(self.ppl_idx)
 
+        # Convert valence scalars into a 1D NumPy array aligned with the neuron index positions (shape: (5586,))
+        self.val_vectors = np.array(self.val_vectors)
 
-brain = fly_brain("mushroom_body.graphml")
+        # Linear algebra conversion and synaptic sign assignment:
+        # 1. nx.to_scipy_sparse_array: builds raw adjacency matrix A where entry A_ij represents source i -> target j.
+        # 2. .transpose(): transposes matrix to W = A^T so entry W_ji represents presynaptic sender i -> postsynaptic receiver j.
+        #    Row j accumulates inputs; Column i originates from sender i.
+        # 3. .multiply(1xN vector): broadcasts across columns so every outgoing synapse of sender i is scaled by its presynaptic valence v_i,
+        #    strictly enforcing Dale's Principle (a neuron's outgoing projections share its excitatory/inhibitory chemical identity).
+        self.sparse_array = nx.to_scipy_sparse_array(G, nodelist = self.node_ids, weight = "syn_count", format = "csr").transpose().multiply(self.val_vectors.reshape(1, len(self.val_vectors)))
 
+        # Normalize incoming synaptic density per postsynaptic neuron
+        # so no single neuron receives infinite incoming drive
+        max_in_weight = np.abs(self.sparse_array).sum(axis=1).max()
+        if max_in_weight > 0:
+            self.sparse_array = self.sparse_array / (max_in_weight * 0.1)  # Keeps baseline gain responsive
