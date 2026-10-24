@@ -26,6 +26,9 @@ class fly_brain:
         # List to store the continuous fast synaptic sign/valence scalar for each presynaptic neuron
         self.val_vectors = []
 
+        # Sigma value for how wide the bell curve for the fly should be
+        self.sigma = 0.35
+
         # Single-pass O(N) extraction loop over the connectome nodes and attributes
         for index, (node_id, data) in enumerate(self.node_list):
             self.node_ids.append(node_id)
@@ -96,8 +99,37 @@ class fly_brain:
         # Evenly spaced angles from -pi to +pi for the directional pool
         self.pref_angles = np.linspace(-np.pi, np.pi, len(self.directional_tuners))
 
+        self.kc_nodes = np.zeros(len(self.node_ids))
+
     # state_dict should include amrio's enviornment variables angle_to_coin, dist_to_coin, speed, and wall_collision
     def encode_sensory(self, state_dict):
-        sin_diff = np.sin(self.pref_angles - state_dict.get("angle_to_coin"))
-        cos_diff = np.cos(self.pref_angles - state_dict.get("angle_to_coin"))
-        angles = np.arctan2(sin_diff, cos_diff)
+        self.kc_nodes.fill(0.0)
+        angle_to_coin, dist_to_coin, speed, wall_collision = state_dict.get("angle_to_coin"), state_dict.get("dist_to_coin"), state_dict.get("speed"), state_dict.get("wall")
+        if (state_dict.get("coin_found")) == 1:
+            # directional tuner calculations
+            diff = self.pref_angles - angle_to_coin
+            sin_diff = np.sin(diff)
+            cos_diff = np.cos(diff)
+            angles = np.arctan2(sin_diff, cos_diff)
+            directional_firing_rates = np.exp(-0.5 * ((angles / self.sigma) ** 2))
+
+            # proximity tuner calculations
+            decay_scalar = np.exp(-(dist_to_coin) / 1000)
+
+            self.kc_nodes[self.directional_tuners] = directional_firing_rates
+            self.kc_nodes[self.proximity_tuners] = decay_scalar
+
+        # velocity feedback calculations
+        clamped_speed = np.clip(speed / 32, 0, 1)
+        
+        self.kc_nodes[self.velocity_feedback] = clamped_speed
+        self.kc_nodes[self.collision_hazardpool] = wall_collision
+
+        self.kc_nodes[~(self.kc_nodes > np.percentile(self.kc_nodes, 95)) & (self.kc_nodes > 0)] = 0
+        return self.kc_nodes
+
+brain = fly_brain("mushroom_body.graphml")
+state_dict = {"coin_found": 1, "angle_to_coin": 0.5, "dist_to_coin": 500, "speed": 16, "wall": 0}
+
+print(np.count_nonzero(brain.encode_sensory(state_dict)))
+
