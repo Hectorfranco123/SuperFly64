@@ -83,3 +83,21 @@ class fly_brain:
         max_in_weight = np.abs(self.sparse_array).sum(axis=1).max()
         if max_in_weight > 0:
             self.sparse_array = self.sparse_array / (max_in_weight * 0.1)  # Keeps baseline gain responsive
+
+        rng = np.random.default_rng(42)
+        
+        rng.shuffle(self.kc_idx)
+        n = len(self.kc_idx)
+        indices = np.round(np.cumsum([0.5, .25, .15, .10]) * n).astype(int)
+        self.directional_tuners = self.kc_idx[0 : indices[0]].copy()
+        self.proximity_tuners = self.kc_idx[indices[0] : indices[1]].copy()
+        self.velocity_feedback = self.kc_idx[indices[1] : indices[2]].copy()
+        self.collision_hazardpool = self.kc_idx[indices[2] :].copy()
+        # Evenly spaced angles from -pi to +pi for the directional pool
+        self.pref_angles = np.linspace(-np.pi, np.pi, len(self.directional_tuners))
+
+    # state_dict should include amrio's enviornment variables angle_to_coin, dist_to_coin, speed, and wall_collision
+    def encode_sensory(self, state_dict):
+        sin_diff = np.sin(self.pref_angles - state_dict.get("angle_to_coin"))
+        cos_diff = np.cos(self.pref_angles - state_dict.get("angle_to_coin"))
+        angles = np.arctan2(sin_diff, cos_diff)
