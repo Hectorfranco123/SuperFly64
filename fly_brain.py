@@ -29,6 +29,12 @@ class fly_brain:
         # Sigma value for how wide the bell curve for the fly should be
         self.sigma = 0.35
 
+        # Alpha value for the integration rate (how much of the previous firing rate the neurons should retain,
+        # neurons have membrance capacitance, they don't instantly lose their previous state)
+        self.alpha = 0.3
+
+        rng = np.random.default_rng(42)
+
         # Single-pass O(N) extraction loop over the connectome nodes and attributes
         for index, (node_id, data) in enumerate(self.node_list):
             self.node_ids.append(node_id)
@@ -39,7 +45,7 @@ class fly_brain:
                 # Fallback: if continuous averages are unpopulated (0), assign discrete signs from the primary nt_type label
                 if data.get("nt_type") == "ACH":
                     self.val_vectors.append(1)    # Acetylcholine is fast excitatory in Drosophila
-                elif data.get("nt_type") == "GABA":  # noqa: SIM114
+                elif data.get("nt_type") == "GABA":  
                     self.val_vectors.append(-1)   # GABA is fast inhibitory
                 elif data.get("nt_type") == "GLUT":
                     self.val_vectors.append(-1)   # Glutamate acts primarily as an inhibitory transmitter in fly central circuits
@@ -73,6 +79,9 @@ class fly_brain:
         # Convert valence scalars into a 1D NumPy array aligned with the neuron index positions (shape: (5586,))
         self.val_vectors = np.array(self.val_vectors)
 
+        approach_mbon = self.mbon_idx[self.val_vectors > 0]
+
+
         # Linear algebra conversion and synaptic sign assignment:
         # 1. nx.to_scipy_sparse_array: builds raw adjacency matrix A where entry A_ij represents source i -> target j.
         # 2. .transpose(): transposes matrix to W = A^T so entry W_ji represents presynaptic sender i -> postsynaptic receiver j.
@@ -87,7 +96,7 @@ class fly_brain:
         if max_in_weight > 0:
             self.sparse_array = self.sparse_array / (max_in_weight * 0.1)  # Keeps baseline gain responsive
 
-        rng = np.random.default_rng(42)
+        
         
         rng.shuffle(self.kc_idx)
         n = len(self.kc_idx)
@@ -99,11 +108,12 @@ class fly_brain:
         # Evenly spaced angles from -pi to +pi for the directional pool
         self.pref_angles = np.linspace(-np.pi, np.pi, len(self.directional_tuners))
 
-        self.kc_nodes = np.zeros(len(self.node_ids))
+        self.sensory_inputs = np.zeros(len(self.node_ids))
+        self.firing_rates = np.zeros(len(self.node_ids))
 
     # state_dict should include amrio's enviornment variables angle_to_coin, dist_to_coin, speed, and wall_collision
     def encode_sensory(self, state_dict):
-        self.kc_nodes.fill(0.0)
+        self.sensory_inputs.fill(0.0)
         angle_to_coin, dist_to_coin, speed, wall_collision = state_dict.get("angle_to_coin"), state_dict.get("dist_to_coin"), state_dict.get("speed"), state_dict.get("wall")
         if (state_dict.get("coin_found")) == 1:
             # directional tuner calculations
@@ -116,20 +126,29 @@ class fly_brain:
             # proximity tuner calculations
             decay_scalar = np.exp(-(dist_to_coin) / 1000)
 
-            self.kc_nodes[self.directional_tuners] = directional_firing_rates
-            self.kc_nodes[self.proximity_tuners] = decay_scalar
+            self.sensory_inputs[self.directional_tuners] = directional_firing_rates
+            self.sensory_inputs[self.proximity_tuners] = decay_scalar
 
         # velocity feedback calculations
         clamped_speed = np.clip(speed / 32, 0, 1)
         
-        self.kc_nodes[self.velocity_feedback] = clamped_speed
-        self.kc_nodes[self.collision_hazardpool] = wall_collision
+        self.sensory_inputs[self.velocity_feedback] = clamped_speed
+        self.sensory_inputs[self.collision_hazardpool] = wall_collision
 
-        self.kc_nodes[~(self.kc_nodes > np.percentile(self.kc_nodes, 95)) & (self.kc_nodes > 0)] = 0
-        return self.kc_nodes
+        self.sensory_inputs[~(self.sensory_inputs > np.percentile(self.sensory_inputs, 95)) & (self.sensory_inputs > 0)] = 0
+        return self.sensory_inputs
+
+
+    def step(self, state_dict):
+        sense = self.encode_sensory(state_dict)
+        recurrent_synaptic_input = self.sparse_array.dot(self.firing_rates)
+        total_drive = np.clip(recurrent_synaptic_input + sense, 0, 1)
+        self.firing_rates = ((1 - self.alpha) * self.firing_rates) + (self.alpha * total_drive)
+        return self.firing_rates
 
 brain = fly_brain("mushroom_body.graphml")
 state_dict = {"coin_found": 1, "angle_to_coin": 0.5, "dist_to_coin": 500, "speed": 16, "wall": 0}
 
-print(np.count_nonzero(brain.encode_sensory(state_dict)))
-
+for i in range(10):
+    brain.step(state_dict)
+print(np.count_nonzero(brain.firing_rates))
