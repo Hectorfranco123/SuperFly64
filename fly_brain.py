@@ -26,13 +26,19 @@ class fly_brain:
         # List to store the continuous fast synaptic sign/valence scalar for each presynaptic neuron
         self.val_vectors = []
 
-        # Sigma value for how wide the bell curve for the fly should be
+        # Sigma value for how wide the bell curve for the fly should be (radians)
         self.sigma = 0.35
 
         # Alpha value for the integration rate (how much of the previous firing rate the neurons should retain,
         # neurons have membrance capacitance, they don't instantly lose their previous state)
         self.alpha = 0.3
 
+        # Mechanical latch state for button_a: tracks whether Mario jumped on the previous frame
+        # so the controller can enforce a 1-frame release cycle required by the SM64 engine
+        self.last_jump = 0
+
+        # Deterministic random number generator (seeded at 42) so Kenyon Cell sensory partitioning
+        # is 100% reproducible across runs
         rng = np.random.default_rng(42)
 
         # Single-pass O(N) extraction loop over the connectome nodes and attributes
@@ -79,7 +85,13 @@ class fly_brain:
         # Convert valence scalars into a 1D NumPy array aligned with the neuron index positions (shape: (5586,))
         self.val_vectors = np.array(self.val_vectors)
 
-        approach_mbon = self.mbon_idx[self.val_vectors > 0]
+        # Partition Mushroom Body Output Neurons (MBONs) into competing behavioral pools based on neurotransmitter valence:
+        # - Approach MBONs (valence > 0, Cholinergic): drive forward attraction toward goals/coins
+        # - Avoidance MBONs (valence < 0, GABA/Glutamatergic): brake forward motion and trigger escape/jump reflexes
+        self.approach_mbon = self.mbon_idx[self.val_vectors[self.mbon_idx] > 0]
+        self.avoidance_mbon = self.mbon_idx[self.val_vectors[self.mbon_idx] < 0]
+
+        
 
 
         # Linear algebra conversion and synaptic sign assignment:
@@ -97,7 +109,11 @@ class fly_brain:
             self.sparse_array = self.sparse_array / (max_in_weight * 0.1)  # Keeps baseline gain responsive
 
         
-        
+        # Randomly shuffle Kenyon Cell indices once at startup and partition into 4 sensory modalities:
+        # - 50% Directional Tuners: Gaussian compass cells tuned to specific relative coin angles
+        # - 25% Proximity Tuners: Exponential distance cells that fire stronger as Mario gets closer to a coin
+        # - 15% Velocity Feedback: Proprioceptive cells encoding Mario's normalized forward speed
+        # - 10% Collision Hazard Pool: Mechanosensory/nociceptive cells that fire upon wall impact
         rng.shuffle(self.kc_idx)
         n = len(self.kc_idx)
         indices = np.round(np.cumsum([0.5, .25, .15, .10]) * n).astype(int)
@@ -108,44 +124,99 @@ class fly_brain:
         # Evenly spaced angles from -pi to +pi for the directional pool
         self.pref_angles = np.linspace(-np.pi, np.pi, len(self.directional_tuners))
 
+        # Preallocate persistent 1D dense state vectors (shape: (5586,)) in __init__ to avoid O(N) heap allocations
+        # and garbage collection pauses during the 30 FPS real-time control loop:
+        # - sensory_inputs: transient external sensory buffer wiped and refilled every frame
+        # - firing_rates: persistent internal neural activation state across frames
         self.sensory_inputs = np.zeros(len(self.node_ids))
         self.firing_rates = np.zeros(len(self.node_ids))
 
-    # state_dict should include amrio's enviornment variables angle_to_coin, dist_to_coin, speed, and wall_collision
+        # Bilateral steering sub-pools (Population Vector Readout):
+        # Per the SM64 bridge spec, positive angle_to_coin means the coin is to Mario's LEFT,
+        # and negative angle_to_coin means the coin is to Mario's RIGHT.
+        self.left_tuners = self.directional_tuners[self.pref_angles > 0]
+        self.right_tuners = self.directional_tuners[self.pref_angles < 0]
+
+    # state_dict should include mario's enviornment variables angle_to_coin, dist_to_coin, speed, and wall_collision
+    # Time Complexity: O(N) vectorized over Kenyon Cell slices | Space Complexity: O(1) in-place buffer updates
     def encode_sensory(self, state_dict):
+        # Reset transient sensory buffer in-place to 0.0 without allocating a new array
         self.sensory_inputs.fill(0.0)
+        # Unpack current frame telemetry from the shared-memory state dictionary
         angle_to_coin, dist_to_coin, speed, wall_collision = state_dict.get("angle_to_coin"), state_dict.get("dist_to_coin"), state_dict.get("speed"), state_dict.get("wall")
         if (state_dict.get("coin_found")) == 1:
-            # directional tuner calculations
+            # directional tuner calculations:
+            # Compute shortest circular angular distance in [-pi, pi] using atan2(sin(diff), cos(diff))
+            # so the compass wraps smoothly across the -pi/+pi boundary behind Mario
             diff = self.pref_angles - angle_to_coin
             sin_diff = np.sin(diff)
             cos_diff = np.cos(diff)
             angles = np.arctan2(sin_diff, cos_diff)
+            # Evaluate Gaussian receptive field (bell curve) centered at each neuron's preferred angle
             directional_firing_rates = np.exp(-0.5 * ((angles / self.sigma) ** 2))
 
-            # proximity tuner calculations
+            # proximity tuner calculations:
+            # Exponential decay scaling from 1.0 (touching coin) down toward 0.0 at long distances
             decay_scalar = np.exp(-(dist_to_coin) / 1000)
 
+            # Write directional array and broadcast proximity scalar directly into preallocated sensory slices
             self.sensory_inputs[self.directional_tuners] = directional_firing_rates
             self.sensory_inputs[self.proximity_tuners] = decay_scalar
 
-        # velocity feedback calculations
+        # velocity feedback calculations: normalize Mario's speed against top running speed (32.0) and clamp to [0, 1]
         clamped_speed = np.clip(speed / 32, 0, 1)
         
+        # Broadcast scalar velocity and binary wall collision flag across their respective KC pools
         self.sensory_inputs[self.velocity_feedback] = clamped_speed
         self.sensory_inputs[self.collision_hazardpool] = wall_collision
 
+        # Enforce biological sparse coding (mimicking Anterior Paired Lateral / APL global feedback inhibition):
+        # Silence all active neurons below the 95th percentile so only the top ~5% strongest Kenyon Cells fire
         self.sensory_inputs[~(self.sensory_inputs > np.percentile(self.sensory_inputs, 95)) & (self.sensory_inputs > 0)] = 0
         return self.sensory_inputs
 
 
+    # Advances the connectome dynamical simulation by one frame (dt = 1/30s).
+    # Time Complexity: O(E + N), where E is non-zero synapses (~sparse CSR dot product) and N is 5586 neurons.
     def step(self, state_dict):
+        # 1. Encode external game environment variables into sparse Kenyon Cell sensory currents
         sense = self.encode_sensory(state_dict)
+        # 2. Compute internal recurrent synaptic drive (W * r_t) across all excitatory/inhibitory connections
         recurrent_synaptic_input = self.sparse_array.dot(self.firing_rates)
+        # 3. Sum internal synaptic input and external sensory input, rectifying and clamping to [0.0, 1.0]
         total_drive = np.clip(recurrent_synaptic_input + sense, 0, 1)
+        # 4. Leaky Integrate-and-Fire (LIF) membrane update: blend 70% previous state with 30% new target drive
         self.firing_rates = ((1 - self.alpha) * self.firing_rates) + (self.alpha * total_drive)
         return self.firing_rates
 
+    # Decodes the full brain firing rate vector into SM64 controller commands: (stick_x, stick_y, button_a).
+    # Matches the C shared-memory struct format "<ffB".
+    def decode_motor(self, firing_rates):
+        # Compute overall Mushroom Body arousal gate (scaled mean MBON activity bounded to [0.1, 1.0])
+        # to modulate steering sharpness based on motivational state
+        mbon_arousal = np.clip(firing_rates[self.mbon_idx].mean() * 5.0, 0.1, 1.0)
+        # Extract mean activity of the wall collision hazard pool and aversive MBON pool
+        hazard_arousal = firing_rates[self.collision_hazardpool].mean()
+        avoidance_arousal = firing_rates[self.avoidance_mbon].mean()
+        # Forward/backward axis (stick_y): net approach drive minus weighted avoidance, amplified by gain of 4
+        stick_y = np.clip((firing_rates[self.approach_mbon].mean() - (0.5 * avoidance_arousal)) * 4, -1, 1)
+        # Left/right steering axis (stick_x): bilateral difference between right-tuned and left-tuned compass pools,
+        # scaled by gain of 2 and gated by MBON arousal (negative = steer left, positive = steer right)
+        stick_x = np.clip((firing_rates[self.right_tuners].mean() - firing_rates[self.left_tuners].mean()) * 2 * mbon_arousal, -1, 1)
+        # Jump reflex (button_a): triggered when either avoidance MBONs or wall collision sensors exceed 0.5
+        button_a = 0
+        if (avoidance_arousal > 0.5 or hazard_arousal > 0.5):
+            # Enforce mandatory 1-frame button release latch so holding jump doesn't lock Mario out of future jumps
+            if (self.last_jump == 1):
+                button_a = 0
+            else:
+                button_a = 1
+        # Update latch memory for the next frame and return C-compatible primitive types
+        self.last_jump = button_a
+        return (float(stick_x), float(stick_y), int(button_a))
+        
+
+# Quick sanity test harness: instantiate connectome and run 10 frames of synthetic sensory input
 brain = fly_brain("mushroom_body.graphml")
 state_dict = {"coin_found": 1, "angle_to_coin": 0.5, "dist_to_coin": 500, "speed": 16, "wall": 0}
 
