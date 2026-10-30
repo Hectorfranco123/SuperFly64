@@ -216,10 +216,3 @@ class fly_brain:
         return (float(stick_x), float(stick_y), int(button_a))
         
 
-# Quick sanity test harness: instantiate connectome and run 10 frames of synthetic sensory input
-brain = fly_brain("mushroom_body.graphml")
-state_dict = {"coin_found": 1, "angle_to_coin": 0.5, "dist_to_coin": 500, "speed": 16, "wall": 0}
-
-for i in range(10):
-    brain.step(state_dict)
-print(np.count_nonzero(brain.firing_rates))
