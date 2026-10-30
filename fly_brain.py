@@ -91,7 +91,10 @@ class fly_brain:
         self.approach_mbon = self.mbon_idx[self.val_vectors[self.mbon_idx] > 0]
         self.avoidance_mbon = self.mbon_idx[self.val_vectors[self.mbon_idx] < 0]
 
-        
+        self.coin_count = None
+        self.wedges = None
+
+        self.kc_trace = np.zeros(len(self.node_ids))
 
 
         # Linear algebra conversion and synaptic sign assignment:
@@ -143,7 +146,7 @@ class fly_brain:
         # Reset transient sensory buffer in-place to 0.0 without allocating a new array
         self.sensory_inputs.fill(0.0)
         # Unpack current frame telemetry from the shared-memory state dictionary
-        angle_to_coin, dist_to_coin, speed, wall_collision = state_dict.get("angle_to_coin"), state_dict.get("dist_to_coin"), state_dict.get("speed"), state_dict.get("wall")
+        angle_to_coin, dist_to_coin, speed, wall_collision, coins, wedges = state_dict.get("angle_to_coin"), state_dict.get("dist_to_coin"), state_dict.get("speed"), state_dict.get("wall"), state_dict.get("coins"), state_dict.get("wedges")
         if (state_dict.get("coin_found")) == 1:
             # directional tuner calculations:
             # Compute shortest circular angular distance in [-pi, pi] using atan2(sin(diff), cos(diff))
@@ -173,6 +176,10 @@ class fly_brain:
         # Enforce biological sparse coding (mimicking Anterior Paired Lateral / APL global feedback inhibition):
         # Silence all active neurons below the 95th percentile so only the top ~5% strongest Kenyon Cells fire
         self.sensory_inputs[~(self.sensory_inputs > np.percentile(self.sensory_inputs, 95)) & (self.sensory_inputs > 0)] = 0
+        if (self.coin_count is None or coins > self.coin_count):
+            self.sensory_inputs[self.pam_idx] = 1
+        if (self.wedges is None or wedges < self.wedges or (clamped_speed == 0 and wall_collision == 1)):
+            self.sensory_inputs[self.ppl_idx] = 1
         return self.sensory_inputs
 
 
@@ -187,6 +194,7 @@ class fly_brain:
         total_drive = np.clip(recurrent_synaptic_input + sense, 0, 1)
         # 4. Leaky Integrate-and-Fire (LIF) membrane update: blend 70% previous state with 30% new target drive
         self.firing_rates = ((1 - self.alpha) * self.firing_rates) + (self.alpha * total_drive)
+        self.apply_plasticity()
         return self.firing_rates
 
     # Decodes the full brain firing rate vector into SM64 controller commands: (stick_x, stick_y, button_a).
@@ -214,5 +222,8 @@ class fly_brain:
         # Update latch memory for the next frame and return C-compatible primitive types
         self.last_jump = button_a
         return (float(stick_x), float(stick_y), int(button_a))
-        
 
+    def apply_plasticity(self):
+        self.kc_trace = np.clip((self.kc_trace * 0.9) + self.firing_rates[self.kc_idx], 0, 1)
+        self.mean_pam = np.clip(self.firing_rates[self.pam_idx].mean(), 0, 1)
+        self.mean_ppl = np.clip(self.firing_rates[self.ppl_idx].mean(), 0, 1)
