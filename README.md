@@ -1,5 +1,5 @@
 # SuperFly64
-To download, modify, and mod the [Super Mario 64](https://www.google.com/search?q=super+mario+64&kgmid=/m/0phl8) source code natively on Linux, you will use the community's PC Decompilation project (specifically the enhanced fork, [sm64ex GitHub](https://github.com/sm64pc/sm64ex), or the multiplayer branch [sm64coopdx GitHub](https://github.com/coop-deluxe/sm64coopdx/wiki/Compiling-%28Linux%29)). Because copyright law protects the game's actual art and sound assets, the source code repository is fully legal but text-only. You must supply your own original N64 ROM file to legally extract those assets during compilation. [1, 2, 3, 4, 5] 
+To download, modify, and mod the [Super Mario 64](https://www.google.com/search?q=super+mario+64&kgmid=/m/0phl8) source code natively on Linux, you will use the community's PC Decompilation project (specifically the enhanced fork, [sm64ex GitHub](https://github.com/sm64pc/sm64ex), or the multiplayer branch [sm64coopdx GitHub](https://github.com/coop-deluxe/sm64coopdx/wiki/Compiling-%28Linux%29)). Because copyright law protects the game's actual art and sound assets, the source code repository is fully legal but text-only. You must supply your own original N64 ROM file to legally extract those assets during compilation.
 ## Step 1: Install Build Dependencies
 Open your terminal and install the compiler, tools, and graphics libraries required to build the game engine from scratch:
 
@@ -18,36 +18,36 @@ sudo dnf install make gcc python3 glew-devel SDL2-devel git
 
 
 ## Step 2: Clone the Source Code Repository
-Clone the repository using Git. The sm64ex repository is highly recommended for modding as it features toggles for built-in mods (like widescreen and a modern analog camera). [6, 7] 
+Clone the repository using Git. The sm64ex repository is highly recommended for modding as it features toggles for built-in mods (like widescreen and a modern analog camera). 
 
-git clone https://github.com/sm64pc/sm64ex.git
+git clone [https://github.com/sm64pc/sm64ex.git](https://github.com/sm64pc/sm64ex.git)
 cd sm64ex
 
 ## Step 3: Add Your Base ROM
 
    1. Obtain a legally dumped copy of the Super Mario 64 US N64 ROM (must be .z64 format).
    2. Rename the file to baserom.us.z64.
-   3. Move or copy this file directly into the root folder of your cloned sm64ex directory. [2, 7, 8] 
+   3. Move or copy this file directly into the root folder of your cloned sm64ex directory. 
 
 ## Step 4: Compile the Game
-Compile the game using the make utility. You can pass parameters to bake options directly into your custom build: [9, 10] 
+Compile the game using the make utility. You can pass parameters to bake options directly into your custom build: 
 
 make BETTERCAMERA=1 EXTERNAL_DATA=1 TEXTURE_FIX=1 -j$(nproc)
 
 
 * BETTERCAMERA=1: Enables a modern, non-clunky 3D camera.
 * EXTERNAL_DATA=1: Allows you to drop custom HD texture packs into a user folder later.
-* -j$(nproc): Forces Linux to use all your available CPU cores to speed up the compilation process. [7, 9] 
+* -j$(nproc): Forces Linux to use all your available CPU cores to speed up the compilation process.
 
 IMPORTANT: every time you rebuild, use the SAME options as above. Running plain "make" without them can build a different version of the game.
 
-Once compilation finishes, your native executable will be waiting for you. Run it with: [1] 
+Once compilation finishes, your native executable will be waiting for you. Run it with: 
 
 ./build/us_pc/sm64.us.f3dex2e
 
 ------------------------------
 ## 🛠️ How to Mess with the Source Code & Mod It
-Because you compiled the game natively, you can alter the code directly using a code editor like VS Code or Vim: [2, 11] 
+Because you compiled the game natively, you can alter the code directly using a code editor like VS Code or Vim: 
 
 * Change Mario's Physics & Movement: Start in src/game/mario.c (jump heights are set there when Mario enters a jump). Most movement code is split across the src/game/mario_actions_*.c files: mario_actions_moving.c (running/walking speed), mario_actions_airborne.c (jumps, falling, gravity), mario_actions_submerged.c (swimming).
 * Modify Text & Dialogues: Navigate to text/us/dialogs.h to change what Bowser, Toad, or Bob-omb Buddies say when you interact with them.
@@ -59,7 +59,7 @@ Because you compiled the game natively, you can alter the code directly using a 
 git apply name_of_patch.patch
 
 
-Whenever you modify any .c or .h source file, simply open your terminal in the main folder and run the make command again (with the same options!). The compiler will rebuild only the files you changed, updating your game in seconds. [10] 
+Whenever you modify any .c or .h source file, simply open your terminal in the main folder and run the make command again (with the same options!). The compiler will rebuild only the files you changed, updating your game in seconds. 
 If you ADD a brand new .c file, you also have to run make again, or the game won't include it.
 
 
@@ -75,13 +75,13 @@ How it works:
   The game and the brain take turns every frame ("lockstep"), 30 times a second.
 
 ## Progress
-[x] Stage 1: bridge between game and Python works (tested: Mario steers toward coins + jumps)
-[x] Input display overlay in-game (stick box + button lights)
-[x] Stage 2: real FlyWire Mushroom Body connectome (5,586 neurons) drives Mario via LIF dynamics and population motor decoding
-[ ] Stage 3: rewards: coins -> PAM dopamine neurons (reward), damage/wall stalls -> PPL1 dopamine neurons (punishment)
-[ ] Stage 4: three-factor eligibility trace learning in the mushroom body + save learned weights to a file
-[ ] Stage 5: test it: learning fly vs frozen fly, same save state, chart the results
-[ ] Extra: Python dashboard showing what the fly is "thinking" (pyqtgraph or Dear PyGui)
+- [x] Stage 1: bridge between game and Python works (tested: Mario steers toward coins + jumps)
+- [x] Input display overlay in-game (stick box + button lights)
+- [x] Stage 2: real FlyWire Mushroom Body connectome (5,586 neurons) drives Mario via LIF dynamics and population motor decoding
+- [x] Stage 3: rewards: coins -> PAM dopamine neurons (reward), damage/wall stalls -> PPL1 dopamine neurons (punishment)
+- [x] Stage 4: three-factor eligibility trace learning in the mushroom body + save learned weights to a file
+- [ ] Stage 5: test it: learning fly vs frozen fly, same save state, chart the results
+- [ ] Extra: Python dashboard showing what the fly is "thinking" (pyqtgraph or Dear PyGui)
 
 ## Files changed / added
 C Engine & Bridge (every line marked `// hector added` or `// hector changed`):
@@ -114,24 +114,26 @@ Rules of the bridge:
 * Fly buttons ADD to yours. The fly's stick only works while you're NOT touching yours (you can always take over).
 
 ## Shared memory layout (68 bytes) - C and Python MUST match
-Python struct format: `"<II3fff3fffhhBBxxffBxxx"`
-offset 0   game_frame      (uint32)    game bumps this each frame after writing telemetry
-offset 4   brain_frame     (uint32)    Python sets = game_frame when its answer is ready (write this LAST)
-offset 8   pos x,y,z       (3 floats)  Mario's position
-offset 20  face_yaw        (float)     Mario's facing angle in radians
-offset 24  fwd_vel         (float)     Mario's forward speed
-offset 28  coin_pos x,y,z  (3 floats)  nearest coin position
-offset 40  angle_to_coin   (float)     radians (-pi to pi) relative to Mario's heading (0 = ahead, + = left, - = right)
-offset 44  dist_to_coin    (float)     3D distance to nearest coin (-1 if no coin found)
-offset 48  coins           (int16)     coins collected
-offset 50  wedges          (int16)     health as power meter wedges (0 to 8, 8 = full)
-offset 52  wall_collision  (uint8)     1 if Mario is touching a wall, else 0
-offset 53  coin_found      (uint8)     1 if a coin was found, 0 if none (coin fields invalid)
-offset 54  _pad1           (2 bytes)   padding
-offset 56  stick_x         (float)     -1.0 to 1.0, Mario-relative (+1.0 = right, -1.0 = left)
-offset 60  stick_y         (float)     -1.0 to 1.0, Mario-relative (+1.0 = forward)
-offset 64  button_a        (uint8)     1 = hold A (jump), 0 = release (must return to 0 for >=1 frame to jump again)
-offset 65  _pad2           (3 bytes)   padding
+Python struct format: `"<II3fff3fffhhBBxxffBxxx"` 
+
+* offset 0   game_frame      (uint32)    game bumps this each frame after writing telemetry
+* offset 4   brain_frame     (uint32)    Python sets = game_frame when its answer is ready (write this LAST)
+* offset 8   pos x,y,z       (3 floats)  Mario's position
+* offset 20  face_yaw        (float)     Mario's facing angle in radians
+* offset 24  fwd_vel         (float)     Mario's forward speed
+* offset 28  coin_pos x,y,z  (3 floats)  nearest coin position
+* offset 40  angle_to_coin   (float)     radians (-pi to pi) relative to Mario's heading (0 = ahead, + = left, - = right)
+* offset 44  dist_to_coin    (float)     3D distance to nearest coin (-1 if no coin found)
+* offset 48  coins           (int16)     coins collected
+* offset 50  wedges          (int16)     health as power meter wedges (0 to 8, 8 = full)
+* offset 52  wall_collision  (uint8)     1 if Mario is touching a wall, else 0
+* offset 53  coin_found      (uint8)     1 if a coin was found, 0 if none (coin fields invalid)
+* offset 54  _pad1           (2 bytes)   padding
+* offset 56  stick_x         (float)     -1.0 to 1.0, Mario-relative (+1.0 = right, -1.0 = left)
+* offset 60  stick_y         (float)     -1.0 to 1.0, Mario-relative (+1.0 = forward)
+* offset 64  button_a        (uint8)     1 = hold A (jump), 0 = release (must return to 0 for >=1 frame to jump again)
+* offset 65  _pad2           (3 bytes)   padding
+
 If you ever change the layout: change controller_fly.h AND the Python format string together. (The C side refuses to compile if the size isn't 68, as a reminder.)
 
 ## Lessons learned / gotchas
@@ -197,6 +199,10 @@ If you use **Mario Fly Brain** in academic research or coursework, please cite t
   year         = {2026},
   month        = oct,
   institution  = {Elizabethtown College},
-  url          = {[https://github.com/Nietch2/SuperFly64](https://github.com/Nietch2/SuperFly64)},
+  url          = {https://github.com/Hectorfranco123/SuperFly64},
   version      = {0.1.0}
 }
+```
+
+### Upstream Dataset Attribution
+This project processes connectomic data from the **FlyWire FAFB (Full Adult Fly Brain)** dataset. Any work utilizing the extracted subgraphs must also credit the upstream dataset in accordance with FlyWire's attribution guidelines (Dorkenwald et al., *Nature*, 2024).
