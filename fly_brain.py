@@ -7,7 +7,7 @@ import scipy.sparse as sp
 
 class fly_brain:
     
-    def __init__(self, graphml_path):
+    def __init__(self, graphml_path, load_npz = None):
         # Load the serialized biological connectome graph from the GraphML XML file
         G = nx.read_graphml(graphml_path)
 
@@ -32,6 +32,9 @@ class fly_brain:
         # Alpha value for the integration rate (how much of the previous firing rate the neurons should retain,
         # neurons have membrance capacitance, they don't instantly lose their previous state)
         self.alpha = 0.3
+
+        # Scalar learning rate (eta) governing the magnitude of dopamine-gated synaptic weight updates
+        self.learning_rate = 0.05
 
         # Mechanical latch state for button_a: tracks whether Mario jumped on the previous frame
         # so the controller can enforce a 1-frame release cycle required by the SM64 engine
@@ -91,10 +94,12 @@ class fly_brain:
         self.approach_mbon = self.mbon_idx[self.val_vectors[self.mbon_idx] > 0]
         self.avoidance_mbon = self.mbon_idx[self.val_vectors[self.mbon_idx] < 0]
 
+        # State trackers for previous frame telemetry to detect reward (coin pickup) and punishment (damage) deltas
         self.coin_count = None
         self.wedges = None
 
-        self.kc_trace = np.zeros(len(self.node_ids))
+        # Eligibility trace buffer for Kenyon Cells: tracks recent presynaptic sensory activity over a ~1-2s decaying window
+        self.kc_trace = np.zeros(len(self.kc_idx))
 
 
         # Linear algebra conversion and synaptic sign assignment:
@@ -103,13 +108,17 @@ class fly_brain:
         #    Row j accumulates inputs; Column i originates from sender i.
         # 3. .multiply(1xN vector): broadcasts across columns so every outgoing synapse of sender i is scaled by its presynaptic valence v_i,
         #    strictly enforcing Dale's Principle (a neuron's outgoing projections share its excitatory/inhibitory chemical identity).
-        self.sparse_array = nx.to_scipy_sparse_array(G, nodelist = self.node_ids, weight = "syn_count", format = "csr").transpose().multiply(self.val_vectors.reshape(1, len(self.val_vectors)))
-
-        # Normalize incoming synaptic density per postsynaptic neuron
-        # so no single neuron receives infinite incoming drive
-        max_in_weight = np.abs(self.sparse_array).sum(axis=1).max()
-        if max_in_weight > 0:
-            self.sparse_array = self.sparse_array / (max_in_weight * 0.1)  # Keeps baseline gain responsive
+        if (load_npz is None):
+            self.sparse_array = nx.to_scipy_sparse_array(G, nodelist = self.node_ids, weight = "syn_count", format = "csr").transpose().multiply(self.val_vectors.reshape(1, len(self.val_vectors)))
+            # Normalize incoming synaptic density per postsynaptic neuron
+            # so no single neuron receives infinite incoming drive
+            max_in_weight = np.abs(self.sparse_array).sum(axis=1).max()
+            if max_in_weight > 0:
+                self.sparse_array = self.sparse_array / (max_in_weight * 0.1)  # Keeps baseline gain responsive
+        else:
+            # Load pre-trained, already-normalized synaptic weight matrix from disk if a checkpoint path is provided
+            self.sparse_array = sp.load_npz(load_npz)
+        
 
         
         # Randomly shuffle Kenyon Cell indices once at startup and partition into 4 sensory modalities:
@@ -176,10 +185,21 @@ class fly_brain:
         # Enforce biological sparse coding (mimicking Anterior Paired Lateral / APL global feedback inhibition):
         # Silence all active neurons below the 95th percentile so only the top ~5% strongest Kenyon Cells fire
         self.sensory_inputs[~(self.sensory_inputs > np.percentile(self.sensory_inputs, 95)) & (self.sensory_inputs > 0)] = 0
-        if (self.coin_count is None or coins > self.coin_count):
-            self.sensory_inputs[self.pam_idx] = 1
-        if (self.wedges is None or wedges < self.wedges or (clamped_speed == 0 and wall_collision == 1)):
+        # Initialize telemetry trackers on the very first frame without firing false dopamine bursts
+        if (self.coin_count is None or self.wedges is None):
+            self.wedges = wedges
+            self.coin_count = coins
+            return self.sensory_inputs
+        # Stage 3 Dopaminergic Teaching Signals (injected after APL sparsity so global inhibition doesn't wipe them):
+        # Trigger appetitive PAM reward cluster when Mario collects a coin
+        if (coins > self.coin_count):
+            self.sensory_inputs[self.pam_idx] = 1       
+        # Trigger aversive PPL1 punishment cluster when Mario loses health wedges or stalls against a wall
+        if (wedges < self.wedges or (clamped_speed < 0.05 and wall_collision == 1)):
             self.sensory_inputs[self.ppl_idx] = 1
+        # Update telemetry trackers for the next frame's delta comparison
+        self.wedges = wedges
+        self.coin_count = coins
         return self.sensory_inputs
 
 
@@ -194,6 +214,7 @@ class fly_brain:
         total_drive = np.clip(recurrent_synaptic_input + sense, 0, 1)
         # 4. Leaky Integrate-and-Fire (LIF) membrane update: blend 70% previous state with 30% new target drive
         self.firing_rates = ((1 - self.alpha) * self.firing_rates) + (self.alpha * total_drive)
+        # 5. Execute three-factor dopaminergic synaptic plasticity to update KC -> MBON weights
         self.apply_plasticity()
         return self.firing_rates
 
@@ -223,7 +244,36 @@ class fly_brain:
         self.last_jump = button_a
         return (float(stick_x), float(stick_y), int(button_a))
 
+    # Stage 4 Three-Factor Synaptic Plasticity (Kenyon Cell eligibility trace x Dopamine x MBON compartment).
+    # Modifies existing non-zero synapses in-place within the CSR matrix while preserving Dale's Principle ([0, 1] bounds).
     def apply_plasticity(self):
+        # Decay previous Kenyon Cell eligibility trace by 10% and accumulate current KC firing activity
         self.kc_trace = np.clip((self.kc_trace * 0.9) + self.firing_rates[self.kc_idx], 0, 1)
-        self.mean_pam = np.clip(self.firing_rates[self.pam_idx].mean(), 0, 1)
-        self.mean_ppl = np.clip(self.firing_rates[self.ppl_idx].mean(), 0, 1)
+        # Compute mean population activity across appetitive (PAM) and aversive (PPL1) dopaminergic clusters
+        mean_pam = np.clip(self.firing_rates[self.pam_idx].mean(), 0, 1)
+        mean_ppl = np.clip(self.firing_rates[self.ppl_idx].mean(), 0, 1)
+        # Early exit if both dopamine signals are below the active threshold to skip dense submatrix slicing on neutral frames
+        if (mean_ppl < 0.005 and mean_pam < 0.005):
+            return
+        # Appetitive reinforcement (PAM active): potentiate KC -> Approach MBONs and depress KC -> Avoidance MBONs
+        if (mean_pam > 0):
+            kc_approach = self.sparse_array[self.approach_mbon[:, None], self.kc_idx].toarray()
+            approach_slice = np.clip(np.where(kc_approach == 0, 0, kc_approach + (self.learning_rate * mean_pam * self.kc_trace)), 0, 1)
+            self.sparse_array[self.approach_mbon[:, None], self.kc_idx] = approach_slice
+
+            kc_avoidance = self.sparse_array[self.avoidance_mbon[:, None], self.kc_idx].toarray()
+            avoidance_slice = np.clip(np.where(kc_avoidance == 0, 0, kc_avoidance - (self.learning_rate * mean_pam * self.kc_trace)), 0, 1)
+            self.sparse_array[self.avoidance_mbon[:, None], self.kc_idx] = avoidance_slice
+        # Aversive reinforcement (PPL1 active): depress KC -> Approach MBONs and potentiate KC -> Avoidance MBONs
+        if (mean_ppl > 0):
+            kc_approach = self.sparse_array[self.approach_mbon[:, None], self.kc_idx].toarray()
+            approach_slice = np.clip(np.where(kc_approach == 0, 0, kc_approach - (self.learning_rate * mean_ppl * self.kc_trace)), 0, 1)
+            self.sparse_array[self.approach_mbon[:, None], self.kc_idx] = approach_slice
+
+            kc_avoidance = self.sparse_array[self.avoidance_mbon[:, None], self.kc_idx].toarray()
+            avoidance_slice = np.clip(np.where(kc_avoidance == 0, 0, kc_avoidance + (self.learning_rate * mean_ppl * self.kc_trace)), 0, 1)
+            self.sparse_array[self.avoidance_mbon[:, None], self.kc_idx] = avoidance_slice
+
+    # Serializes the learned sparse synaptic weight matrix to disk as a compressed .npz archive
+    def save_plasticity(self, path):
+        sp.save_npz(path, self.sparse_array)
