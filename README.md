@@ -64,37 +64,42 @@ If you ADD a brand new .c file, you also have to run make again, or the game won
 
 
 ==============================
-## 🪰 FLY BRAIN PROJECT (repo name idea: wing-cap)
+## 🪰 FLY BRAIN PROJECT (SuperFly64)
 ==============================
 
-GOAL: a real fruit fly brain wiring map (the MaleCNS v1.0 connectome from Janelia + Google, released Sept 3 2026) controls Mario. Later stage: the fly LEARNS from rewards (coins) and punishments (damage) using the mushroom body, the brain region real flies learn with.
+GOAL: A real fruit fly (*Drosophila melanogaster*) brain wiring map extracted from the **FlyWire FAFB (Full Adult Fly Brain)** connectome dataset controls Mario. Specifically, we extract and simulate 5,586 Mushroom Body neurons (Kenyon Cells, Mushroom Body Output Neurons, and PAM/PPL1 dopaminergic clusters) using Leaky Integrate-and-Fire (LIF) dynamics and neurotransmitter valence constraints (Dale's Principle). In Stages 3–4, the fly LEARNS from rewards (coins -> PAM dopamine cluster) and punishments (damage/wall hazards -> PPL1 dopamine cluster) via three-factor synaptic plasticity.
 
 How it works:
-  Game (C) --writes Mario's position, facing, speed, coins, health--> shared memory (/dev/shm/mario_brain)
-  Python fly brain --reads that, decides, writes stick + buttons--> shared memory --> Game
+  Game (C) --writes Mario's position, facing, speed, nearest coin vector, coins, health, wall contact--> shared memory (/dev/shm/mario_brain)
+  Python fly brain --encodes sensory KCs, steps recurrent sparse matrix, decodes MBON motor outputs--> shared memory --> Game
   The game and the brain take turns every frame ("lockstep"), 30 times a second.
 
 ## Progress
-[x] Stage 1: bridge between game and Python works (tested: Mario runs right + jumps on his own)
+[x] Stage 1: bridge between game and Python works (tested: Mario steers toward coins + jumps)
 [x] Input display overlay in-game (stick box + button lights)
-[ ] Stage 2: real fly brain drives Mario (no learning yet)
-[ ] Stage 3: rewards: coins -> PAM dopamine neurons (reward), damage -> PPL1 dopamine neurons (punishment)
-[ ] Stage 4: learning in the mushroom body + save learned weights to a file
+[x] Stage 2: real FlyWire Mushroom Body connectome (5,586 neurons) drives Mario via LIF dynamics and population motor decoding
+[ ] Stage 3: rewards: coins -> PAM dopamine neurons (reward), damage/wall stalls -> PPL1 dopamine neurons (punishment)
+[ ] Stage 4: three-factor eligibility trace learning in the mushroom body + save learned weights to a file
 [ ] Stage 5: test it: learning fly vs frozen fly, same save state, chart the results
 [ ] Extra: Python dashboard showing what the fly is "thinking" (pyqtgraph or Dear PyGui)
 
-## Files I changed / added (every line marked // hector added or // hector changed)
+## Files changed / added
+C Engine & Bridge (every line marked `// hector added` or `// hector changed`):
 * src/game/hud.c                              -> input display overlay (render_hud_fly_inputs), called at end of render_hud
-* src/pc/controller/controller_fly.c          -> NEW: the fly controller backend
-* src/pc/controller/controller_fly.h          -> NEW: shared memory layout (BrainLink)
+* src/pc/controller/controller_fly.c          -> NEW: the fly controller backend & nearest-coin sensor
+* src/pc/controller/controller_fly.h          -> NEW: 68-byte shared memory layout (BrainLink)
 * src/pc/controller/controller_entry_point.c  -> 2 lines: include + &controller_fly (must stay LAST in the list)
-* brain/test_fly_bridge.py                    -> NEW: test script (stick right, tap A every 2 seconds)
+* brain/test_fly_bridge.py                    -> NEW: shared-memory bridge script
 
-Search the project for "hector" to find every change:
+Connectome Parser & Neural Simulation:
+* brain/fly_data_parser.py                    -> NEW: filters FlyWire CSVs (`consolidated_cell_types.csv`, `neurons.csv`, `connections_princeton.csv`) for Mushroom Body neurons (`KC`, `MBON`, `PAM`, `PPL`) and exports `mushroom_body.graphml`
+* brain/fly_brain.py                          -> NEW: `fly_brain` class implementing GraphML loading, Dale's Principle sparse matrix construction, Gaussian/exponential KC sensory encoding, LIF dynamics, and bilateral MBON motor decoding
+
+Search the project for "hector" to find every C/bridge change:
 grep -rn "hector" src/ brain/
 
 ## How to run it
-1. Build:   make BETTERCAMERA=1 EXTERNAL_DATA=1 TEXTURE_FIX=1 -j$(nproc)
+1. Build:   make BETTERCAMERA=1 EXTERNAL_DATA=1 TEXTURE_FIX=1 NODRAWINGDISTANCE=1 -j$(nproc)
 2. Start the game FIRST:   ./build/us_pc/sm64.us.f3dex2e   (it creates the shared memory)
 3. Load into a level.
 4. In a second terminal:
@@ -108,19 +113,26 @@ Rules of the bridge:
 * If Python crashes mid-game, expect one ~1.5 second stutter, then the game carries on.
 * Fly buttons ADD to yours. The fly's stick only works while you're NOT touching yours (you can always take over).
 
-## Shared memory layout (36 bytes) - C and Python MUST match
-Python struct format: "<II5fhhbbH"
-offset 0   game_frame   (uint32)  game bumps this each frame
-offset 4   brain_frame  (uint32)  Python sets = game_frame when its answer is ready (write this LAST)
-offset 8   pos x,y,z    (3 floats)
-offset 20  face_yaw     (float, radians)
-offset 24  fwd_vel      (float)
-offset 28  coins        (int16)
-offset 30  health       (int16)   health >> 8 = power meter wedges (8 = full)
-offset 32  stick_x      (int8)    -128 to 127
-offset 33  stick_y      (int8)
-offset 34  buttons      (uint16)  A=0x8000 B=0x4000 Z=0x2000 START=0x1000 L=0x0020 R=0x0010
-If you ever change the layout: change controller_fly.h AND the Python format string together. (The C side refuses to compile if the size isn't 36, as a reminder.)
+## Shared memory layout (68 bytes) - C and Python MUST match
+Python struct format: `"<II3fff3fffhhBBxxffBxxx"`
+offset 0   game_frame      (uint32)    game bumps this each frame after writing telemetry
+offset 4   brain_frame     (uint32)    Python sets = game_frame when its answer is ready (write this LAST)
+offset 8   pos x,y,z       (3 floats)  Mario's position
+offset 20  face_yaw        (float)     Mario's facing angle in radians
+offset 24  fwd_vel         (float)     Mario's forward speed
+offset 28  coin_pos x,y,z  (3 floats)  nearest coin position
+offset 40  angle_to_coin   (float)     radians (-pi to pi) relative to Mario's heading (0 = ahead, + = left, - = right)
+offset 44  dist_to_coin    (float)     3D distance to nearest coin (-1 if no coin found)
+offset 48  coins           (int16)     coins collected
+offset 50  wedges          (int16)     health as power meter wedges (0 to 8, 8 = full)
+offset 52  wall_collision  (uint8)     1 if Mario is touching a wall, else 0
+offset 53  coin_found      (uint8)     1 if a coin was found, 0 if none (coin fields invalid)
+offset 54  _pad1           (2 bytes)   padding
+offset 56  stick_x         (float)     -1.0 to 1.0, Mario-relative (+1.0 = right, -1.0 = left)
+offset 60  stick_y         (float)     -1.0 to 1.0, Mario-relative (+1.0 = forward)
+offset 64  button_a        (uint8)     1 = hold A (jump), 0 = release (must return to 0 for >=1 frame to jump again)
+offset 65  _pad2           (3 bytes)   padding
+If you ever change the layout: change controller_fly.h AND the Python format string together. (The C side refuses to compile if the size isn't 68, as a reminder.)
 
 ## Lessons learned / gotchas
 * FileNotFoundError: /dev/shm/mario_brain  -> I forgot to run make, OR the game isn't running yet. Check with:  ls -l /dev/shm/
@@ -137,16 +149,13 @@ Do commit: my changed/new source files, brain/ scripts, a README
 Check before pushing:  git status
 Commit after every stage that works, so I can roll back.
 
-## Next steps (Stage 2)
-1. Make a neuPrint account (neuprint.janelia.org) and get my API token.
-2. In brain/.venv:  pip install neuprint-python
-3. Download the MaleCNS v1.0 connectivity files into brain/data/  (male-cns.janelia.org download page)
-4. Look up the neurons to use:
-   - outputs: DNa01 / DNa02 (steering -> stick X), giant fiber DNp01 (escape jump -> A button)
-   - inputs: visual / looming-detecting neurons
-   Tools: neuPrint, Virtual Fly Brain (virtualflybrain.org)
-5. Get the brain simulating ALONE first (no game) and reproduce a known result to prove it works.
-6. Replace "push right" in the test script with the fly's real decisions.
+## Connectome Pipeline & Architecture (Stage 2–4)
+1. In `brain/.venv`: `pip install numpy scipy networkx pandas`
+2. Place the FlyWire FAFB CSV files (`consolidated_cell_types.csv`, `neurons.csv`, `connections_princeton.csv`) in the working directory and run `python3 fly_data_parser.py` to generate `mushroom_body.graphml` (5,586 nodes).
+3. Neuron compartments modeled in `fly_brain.py`:
+   - **Inputs (`kc_idx`):** Kenyon Cells partitioned into 50% Gaussian directional compass tuners (`left_tuners` / `right_tuners`), 25% exponential coin proximity tuners, 15% normalized velocity feedback cells, and 10% wall-collision hazard cells (with 95th-percentile APL-inspired sparsity).
+   - **Outputs (`mbon_idx`):** Mushroom Body Output Neurons split by neurotransmitter valence into Cholinergic approach pools (`approach_mbon` -> forward thrust `stick_y`) and GABA/Glutamatergic avoidance pools (`avoidance_mbon` -> braking and latched `button_a` jump reflex).
+   - **Modulators (`pam_idx` / `ppl_idx`):** Appetitive (PAM) and aversive (PPL1) dopaminergic clusters triggered by coin collection and health loss/wall stalls to drive synaptic plasticity.
 
 Reminders: an untrained connectome doesn't "know" how to play. It does fly reflexes (turning, darting, escape jumps). The learning comes in Stages 3-5.
 
@@ -188,10 +197,6 @@ If you use **Mario Fly Brain** in academic research or coursework, please cite t
   year         = {2026},
   month        = oct,
   institution  = {Elizabethtown College},
-  url          = {[https://github.com/](https://github.com/)Nietch2/SuperFly64},
+  url          = {[https://github.com/Nietch2/SuperFly64](https://github.com/Nietch2/SuperFly64)},
   version      = {0.1.0}
 }
-```
-
-### Upstream Dataset Attribution
-This project processes connectomic data from the **FlyWire FAFB (Full Adult Fly Brain)** dataset. Any work utilizing the extracted subgraphs must also credit the upstream dataset in accordance with FlyWire's attribution guidelines (Dorkenwald et al., *Nature*, 2024).
