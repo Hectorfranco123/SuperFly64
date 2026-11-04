@@ -109,12 +109,21 @@ class fly_brain:
         # 3. .multiply(1xN vector): broadcasts across columns so every outgoing synapse of sender i is scaled by its presynaptic valence v_i,
         #    strictly enforcing Dale's Principle (a neuron's outgoing projections share its excitatory/inhibitory chemical identity).
         if (load_npz is None):
-            self.sparse_array = nx.to_scipy_sparse_array(G, nodelist = self.node_ids, weight = "syn_count", format = "csr").transpose().multiply(self.val_vectors.reshape(1, len(self.val_vectors)))
+            self.sparse_array = nx.to_scipy_sparse_array(G, nodelist = self.node_ids, weight = "syn_count", format = "csr").transpose().multiply(self.val_vectors.reshape(1, len(self.val_vectors))).tocsr()
             # Normalize incoming synaptic density per postsynaptic neuron
             # so no single neuron receives infinite incoming drive
-            max_in_weight = np.abs(self.sparse_array).sum(axis=1).max()
-            if max_in_weight > 0:
-                self.sparse_array = self.sparse_array / (max_in_weight * 0.1)  # Keeps baseline gain responsive
+            row_sums = np.squeeze(np.asarray(np.abs(self.sparse_array).sum(axis=1)))
+            
+            # 2. Prevent division by zero
+            row_sums[row_sums == 0] = 1.0
+            
+            # 3. Broadcast the row sums to match every non-zero element's row
+            # np.repeat repeats the row scale factor for exactly how many entries are in that row
+            row_indices_repeats = np.diff(self.sparse_array.indptr)
+            element_row_sums = np.repeat(row_sums, row_indices_repeats)
+            
+            # 4. Modify the underlying data array directly (incorporating your 0.1 factor)
+            self.sparse_array.data /= (element_row_sums)
         else:
             # Load pre-trained, already-normalized synaptic weight matrix from disk if a checkpoint path is provided
             self.sparse_array = sp.load_npz(load_npz)
@@ -166,6 +175,9 @@ class fly_brain:
             angles = np.arctan2(sin_diff, cos_diff)
             # Evaluate Gaussian receptive field (bell curve) centered at each neuron's preferred angle
             directional_firing_rates = np.exp(-0.5 * ((angles / self.sigma) ** 2))
+            # Enforce biological sparse coding (mimicking Anterior Paired Lateral / APL global feedback inhibition):
+            # Silence all active neurons below the 95th percentile so only the top ~5% strongest Kenyon Cells fire
+            directional_firing_rates[~(directional_firing_rates > np.percentile(directional_firing_rates, 95)) & (directional_firing_rates > 0)] = 0
 
             # proximity tuner calculations:
             # Exponential decay scaling from 1.0 (touching coin) down toward 0.0 at long distances
@@ -182,9 +194,6 @@ class fly_brain:
         self.sensory_inputs[self.velocity_feedback] = clamped_speed
         self.sensory_inputs[self.collision_hazardpool] = wall_collision
 
-        # Enforce biological sparse coding (mimicking Anterior Paired Lateral / APL global feedback inhibition):
-        # Silence all active neurons below the 95th percentile so only the top ~5% strongest Kenyon Cells fire
-        self.sensory_inputs[~(self.sensory_inputs > np.percentile(self.sensory_inputs, 95)) & (self.sensory_inputs > 0)] = 0
         # Initialize telemetry trackers on the very first frame without firing false dopamine bursts
         if (self.coin_count is None or self.wedges is None):
             self.wedges = wedges
@@ -195,7 +204,7 @@ class fly_brain:
         if (coins > self.coin_count):
             self.sensory_inputs[self.pam_idx] = 1       
         # Trigger aversive PPL1 punishment cluster when Mario loses health wedges or stalls against a wall
-        if (wedges < self.wedges or (clamped_speed < 0.05 and wall_collision == 1)):
+        if (wedges < self.wedges or (wall_collision == 1)):
             self.sensory_inputs[self.ppl_idx] = 1
         # Update telemetry trackers for the next frame's delta comparison
         self.wedges = wedges
@@ -223,18 +232,18 @@ class fly_brain:
     def decode_motor(self, firing_rates):
         # Compute overall Mushroom Body arousal gate (scaled mean MBON activity bounded to [0.1, 1.0])
         # to modulate steering sharpness based on motivational state
-        mbon_arousal = np.clip(firing_rates[self.mbon_idx].mean() * 5.0, 0.1, 1.0)
+        mbon_arousal = np.clip(firing_rates[self.mbon_idx].mean() * 5.0, 0.35, 1.0)
         # Extract mean activity of the wall collision hazard pool and aversive MBON pool
         hazard_arousal = firing_rates[self.collision_hazardpool].mean()
         avoidance_arousal = firing_rates[self.avoidance_mbon].mean()
         # Forward/backward axis (stick_y): net approach drive minus weighted avoidance, amplified by gain of 4
-        stick_y = np.clip((firing_rates[self.approach_mbon].mean() - (0.5 * avoidance_arousal)) * 4, -1, 1)
+        stick_y = np.clip((firing_rates[self.approach_mbon].mean() * 1.05 - (0.5 * avoidance_arousal)) * 4, 0, 1)
         # Left/right steering axis (stick_x): bilateral difference between right-tuned and left-tuned compass pools,
         # scaled by gain of 2 and gated by MBON arousal (negative = steer left, positive = steer right)
-        stick_x = np.clip((firing_rates[self.right_tuners].mean() - firing_rates[self.left_tuners].mean()) * 2 * mbon_arousal, -1, 1)
+        stick_x = np.clip((firing_rates[self.right_tuners].mean() - firing_rates[self.left_tuners].mean()) * 12 * mbon_arousal, -1, 1)
         # Jump reflex (button_a): triggered when either avoidance MBONs or wall collision sensors exceed 0.5
         button_a = 0
-        if (avoidance_arousal > 0.5 or hazard_arousal > 0.5):
+        if (hazard_arousal > 0.5):
             # Enforce mandatory 1-frame button release latch so holding jump doesn't lock Mario out of future jumps
             if (self.last_jump == 1):
                 button_a = 0
