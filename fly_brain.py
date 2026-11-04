@@ -277,3 +277,9 @@ class fly_brain:
     # Serializes the learned sparse synaptic weight matrix to disk as a compressed .npz archive
     def save_plasticity(self, path):
         sp.save_npz(path, self.sparse_array)
+
+    def get_learning_rate(self):
+        return self.learning_rate
+
+    def set_learning_rate(self, ln):
+        self.learning_rate = ln
