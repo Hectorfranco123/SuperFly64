@@ -89,6 +89,8 @@ def main(): # hector added
                 if shm[RESET_COUNT_OFFSET] != last_reset_count: # hector added
                     recording = True # hector added
                     print("Course restarted. Recording now: drive Mario to the end, then press Ctrl+C.") # hector added
+                    print("sleeping 3 seconds to let the game settle...")
+                    time.sleep(3)  # hector added
                 continue # hector added
 # hector added
             if level is None: # hector added
