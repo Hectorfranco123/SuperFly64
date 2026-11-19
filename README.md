@@ -8,6 +8,8 @@ through dopamine-style reward and punishment. No driving helpers: the fly's neur
 (8 in a row), with finish times of 23.8–24.2 s. The star time is under 21 s. The first learning brain
 plateaued at about 20% finishes and about 32.5 s.
 
+**Target users:** Computational neuroscience students, bio-inspired AI/reinforcement learning researchers, and `sm64ex` modding developers exploring real-time neural-to-game-engine bridges.
+
 ---
 
 ## Part 1: Building the game (sm64ex on Linux)
@@ -229,7 +231,7 @@ pipeline, or simulation harness.
 ### Media, Videos & Presentations
 If you feature this project in a video, stream, or article, you must include:
 - Visible and verbal credit to the authors (Rommel Sanchez Perez and Hector Franco).
-- A direct link to this repository in the video description or article text: https://github.com/Nietch2/SuperFly64
+- A direct link to this repository in the video description or article text: https://github.com/Hectorfranco123/SuperFly64
 
 ### Academic Publications
 If you use Mario Fly Brain in academic research or coursework, please cite this repository using the
